@@ -1,7 +1,16 @@
 #include <stdlib.h>
 
+// Configuration Options
 #define OUTPUT_FREQ 50
+#define STROBE_FREQ 50
 #define SWITCHING_FREQ OUTPUT_FREQ * 400
+#define INVERT 0
+#define HBRIDGEA 11
+#define HBRIDGEB 12
+
+// Constants
+#define TIMER1PINA 9
+#define TIMER1PINB 10
 
 // Structure for SPWM interrupt state and info 
 struct SPWM_Data {
@@ -17,8 +26,12 @@ volatile SPWM_Data spwm_data;
 // PWM Setup
 void set_SPWM1(float switching_frequency, float output_frequency, float scale_factor) {
   // switch outputs to off
-  digitalWrite(9, LOW);
-  digitalWrite(10, LOW);
+  digitalWrite(TIMER1PINA, INVERT);
+  digitalWrite(TIMER1PINB, INVERT);
+  digitalWrite(HBRIDGEA, !INVERT);
+  digitalWrite(HBRIDGEB, !INVERT);  
+  pinMode(HBRIDGEA, OUTPUT);  
+  pinMode(HBRIDGEB, OUTPUT);  
   DDRB |= _BV(DDB1) | _BV(DDB2);
   // disable interrupts while we setup...
   noInterrupts();
@@ -84,13 +97,32 @@ ISR(TIMER1_OVF_vect){
     // Switch off one of the comparators depending on quadrant
     byte tcccr1a = TCCR1A;  
     if(spwm_data.quadrant < 2){
-      OCR1B = 0;
-      tcccr1a &= ~_BV(COM1B1);
+      // HBRIDGE PINS
+      digitalWrite(HBRIDGEA, INVERT);  
+      digitalWrite(HBRIDGEB, !INVERT);              
+      // A on, B off
+      digitalWrite(TIMER1PINB, INVERT);     
+      OCR1B = 0;  
       tcccr1a |= _BV(COM1A1);
+      if(INVERT) 
+        tcccr1a |= _BV(COM1A0);
+      else
+        tcccr1a &= ~_BV(COM1A0);      
+      tcccr1a &= ~_BV(COM1B1); 
+      tcccr1a &= ~_BV(COM1B0); 
     } else {
-      OCR1A = 0;
-      tcccr1a &= ~_BV(COM1A1);
-      tcccr1a |= _BV(COM1B1);      
+      // HBRIDGE PINS
+      digitalWrite(HBRIDGEA, !INVERT);  
+      digitalWrite(HBRIDGEB, INVERT);       
+      digitalWrite(TIMER1PINA, INVERT);    
+      OCR1A = 0;       
+      tcccr1a |= _BV(COM1B1);
+      if(INVERT) 
+        tcccr1a |= _BV(COM1B0);
+      else
+        tcccr1a &= ~_BV(COM1B0);      
+      tcccr1a &= ~_BV(COM1A1); 
+      tcccr1a &= ~_BV(COM1A0);     
     }
     TCCR1A = tcccr1a;
   }
