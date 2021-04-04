@@ -3,14 +3,17 @@
 // Configuration Options
 #define OUTPUT_FREQ 50
 #define STROBE_FREQ 50
-#define SWITCHING_FREQ OUTPUT_FREQ * 400
+#define STROBE_ON_MS 0.2
+#define SWITCHING_FREQ 20000
 #define INVERT 0
 #define HBRIDGEA 11
 #define HBRIDGEB 12
+#define STROBEPIN 3
 
-// Constants
+// Board related Constants
 #define TIMER1PINA 9
 #define TIMER1PINB 10
+
 
 // Structure for SPWM interrupt state and info 
 struct SPWM_Data {
@@ -18,6 +21,9 @@ struct SPWM_Data {
   unsigned int *pwm_values = NULL;
   unsigned int quadrant = 0;
   unsigned int step = 0;
+  unsigned int strobe_counter = 0;  
+  unsigned int strobe_off_value = 0;
+  unsigned int strobe_limit = 0;
 };
 
 // Globals
@@ -29,9 +35,11 @@ void set_SPWM1(float switching_frequency, float output_frequency, float scale_fa
   digitalWrite(TIMER1PINA, INVERT);
   digitalWrite(TIMER1PINB, INVERT);
   digitalWrite(HBRIDGEA, !INVERT);
-  digitalWrite(HBRIDGEB, !INVERT);  
+  digitalWrite(HBRIDGEB, !INVERT); 
+  digitalWrite(STROBEPIN, LOW);    
   pinMode(HBRIDGEA, OUTPUT);  
   pinMode(HBRIDGEB, OUTPUT);  
+  pinMode(STROBEPIN, OUTPUT);  
   DDRB |= _BV(DDB1) | _BV(DDB2);
   // disable interrupts while we setup...
   noInterrupts();
@@ -53,6 +61,9 @@ void set_SPWM1(float switching_frequency, float output_frequency, float scale_fa
   for(int i = 0; i < spwm_data.steps; i++){
     spwm_data.pwm_values[i] = count * sin(2 * M_PI * i / spwm_data.steps / 4)  * scale_factor ;
   }
+  // Work out strobe values
+  spwm_data.strobe_limit = SWITCHING_FREQ/STROBE_FREQ;
+  spwm_data.strobe_off_value = STROBE_ON_MS / 1000.0 * SWITCHING_FREQ;
   // Initialise control registers (always do this first)
   TCCR1A = 0;
   TCCR1B = 0;
@@ -76,6 +87,8 @@ void set_SPWM1(float switching_frequency, float output_frequency, float scale_fa
   // output debug info if required
   Serial.println(count);
   Serial.println(spwm_data.steps);
+  Serial.println(spwm_data.strobe_limit);
+  Serial.println(spwm_data.strobe_off_value);
   for(int i = 0; i < spwm_data.steps; i++){
     Serial.println(spwm_data.pwm_values[i]);
   }    
@@ -83,6 +96,16 @@ void set_SPWM1(float switching_frequency, float output_frequency, float scale_fa
 
 // Interrupt routine
 ISR(TIMER1_OVF_vect){
+  // strobe...
+  spwm_data.strobe_counter++;
+  if(spwm_data.strobe_counter >= spwm_data.strobe_limit){
+    spwm_data.strobe_counter = 0; 
+    digitalWrite(STROBEPIN, HIGH); 
+  } else {
+    if(spwm_data.strobe_counter == spwm_data.strobe_off_value)
+      digitalWrite(STROBEPIN, LOW); 
+  }
+  // SPWM
   //increment step..
   spwm_data.step++;
   // if it overflows...
