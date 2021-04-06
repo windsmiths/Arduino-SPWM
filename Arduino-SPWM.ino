@@ -1,19 +1,26 @@
 #include <stdlib.h>
+#include <EEPROM.h>
 
 // Configuration Options
-#define OUTPUT_FREQ 50
+#define NOMINAL_FREQ 50
+#define CORRECTION 1.002076127
 #define STROBE_FREQ 50
 #define STROBE_ON_MS 0.2
 #define SWITCHING_FREQ 20000
 #define INVERT 0
-#define HBRIDGEA 11
-#define HBRIDGEB 12
-#define STROBEPIN 3
 
 // Board related Constants
 #define TIMER1PINA 9
 #define TIMER1PINB 10
+#define HBRIDGEA 11
+#define HBRIDGEB 12
+#define STROBEPIN 3
+#define UP_PIN 4
+#define DOWN_PIN 5
+#define RPM_TOGGLE_PIN 6
 
+// Other constants
+#define APP_ID "SPWM"
 
 // Structure for SPWM interrupt state and info 
 struct SPWM_Data {
@@ -26,11 +33,53 @@ struct SPWM_Data {
   unsigned int strobe_limit = 0;
 };
 
+// Structure for EEProm Data
+struct EEPromData{
+  char app_id[10] = {APP_ID};
+  byte version = 0;  
+  byte rpm = 33;
+  float speed_correction = 1.0;
+};
+
+struct PinStates{
+  byte up_pin = 1;
+  byte down_pin = 1;
+  byte rpm_pin = 1;
+};
+
 // Globals
+EEPromData settings;
+PinStates pin_states;
 volatile SPWM_Data spwm_data;
 
+//EEPROM
+EEPromData load_settings(){
+  EEPromData default_settings;
+  EEPromData settings;
+  EEPROM.get(0, settings);
+  if(!strcmp(settings.app_id, APP_ID)){
+    Serial.println("Loading settings from EPROM...");
+    // EEPROM has a structure we recognise
+    if (settings.version < default_settings.version){
+      // do any version specific updates here
+    }  
+  } else {
+    // EEPROM is either uninitialised or has been used for something else...
+    Serial.println("Using Default Settings...");
+    settings = default_settings;
+    save_settings(settings);
+  }
+  Serial.print("App ID: "); Serial.println(settings.app_id);
+  Serial.print("Version: "); Serial.println(settings.version);
+  return settings;
+}
+
+void save_settings(EEPromData settings){
+  EEPROM.put(0, settings);
+}
+
 // PWM Setup
-void set_SPWM1(float switching_frequency, float output_frequency, float scale_factor) {
+float set_SPWM1(float switching_frequency, float nominal_frequency, float speed_correction, float scale_factor) {
   // switch outputs to off
   digitalWrite(TIMER1PINA, INVERT);
   digitalWrite(TIMER1PINB, INVERT);
@@ -55,7 +104,9 @@ void set_SPWM1(float switching_frequency, float output_frequency, float scale_fa
   spwm_data.step = 0;
   spwm_data.quadrant = 0;
   // Work out 'on' count array for ocr (only need to do it for 1 quadrant)
-  spwm_data.steps = switching_frequency/output_frequency/4;
+  unsigned int nominal_steps = switching_frequency/nominal_frequency/4;
+  spwm_data.steps = switching_frequency/(nominal_frequency * speed_correction)/4;
+  float actual_correction = (float) nominal_steps / (float) spwm_data.steps;
   free(spwm_data.pwm_values); 
   spwm_data.pwm_values = (unsigned int*) calloc(spwm_data.steps, sizeof(unsigned int));
   for(int i = 0; i < spwm_data.steps; i++){
@@ -85,13 +136,14 @@ void set_SPWM1(float switching_frequency, float output_frequency, float scale_fa
   // enable all interrupts
   interrupts();
   // output debug info if required
-  Serial.println(count);
-  Serial.println(spwm_data.steps);
-  Serial.println(spwm_data.strobe_limit);
-  Serial.println(spwm_data.strobe_off_value);
-  for(int i = 0; i < spwm_data.steps; i++){
-    Serial.println(spwm_data.pwm_values[i]);
-  }    
+  // Serial.println(count);
+  // Serial.println(spwm_data.steps);
+  // Serial.println(spwm_data.strobe_limit);
+  // Serial.println(spwm_data.strobe_off_value);
+  // for(int i = 0; i < spwm_data.steps; i++){
+  //   Serial.println(spwm_data.pwm_values[i]);
+  // }  
+  return actual_correction;  
 }
 
 // Interrupt routine
@@ -164,13 +216,77 @@ ISR(TIMER1_OVF_vect){
   }    
 }
 
+void update_SPWM1(byte rpm, int delta){
+  float nominal_frequency = NOMINAL_FREQ;
+  float speed_correction = settings.speed_correction;
+  bool save = false;
+  if (delta != 0){
+    speed_correction = speed_correction * (float) (spwm_data.steps + delta) / (float) spwm_data.steps;
+  }
+  if (rpm == 45){
+    nominal_frequency = nominal_frequency * 45.0 / (100.0 / 3.0);
+  } 
+  float actual_correction = set_SPWM1(SWITCHING_FREQ, nominal_frequency, speed_correction, 1);
+  if (actual_correction != settings.speed_correction){
+    settings.speed_correction = actual_correction;
+   
+    save = true;
+  }  
+  if (rpm != settings.rpm){
+    settings.rpm = rpm;
+    save = true;
+  }   
+  if (save) save_settings(settings);
+  Serial.print("rpm: "); Serial.println(settings.rpm);  
+  Serial.print("correction: "); Serial.println(settings.speed_correction);     
+}
+
+
 void setup() {
+  // Set Input Pins
+  pinMode(UP_PIN, INPUT_PULLUP); 
+  pinMode(DOWN_PIN, INPUT_PULLUP); 
+  pinMode(RPM_TOGGLE_PIN, INPUT_PULLUP); 
   // Initialise serial port
   Serial.begin(9600);
+  // Load settings
+  settings = load_settings();
   // Setup SPWM...
-  set_SPWM1(SWITCHING_FREQ, OUTPUT_FREQ, 1);
+  update_SPWM1(settings.rpm, 0);
 }
 
 void loop() {
-  // Nothing to do...
+  // Read inputs
+  byte up_pin = digitalRead(UP_PIN);
+  byte down_pin = digitalRead(DOWN_PIN);
+  byte rpm_pin = digitalRead(RPM_TOGGLE_PIN);
+  // Wait a bit and then read again to 'debounce'
+  delay(10);
+  up_pin = up_pin or digitalRead(UP_PIN);
+  down_pin = down_pin or digitalRead(DOWN_PIN);
+  rpm_pin = rpm_pin or digitalRead(RPM_TOGGLE_PIN);
+  // Do any actions 
+  if (pin_states.up_pin and !up_pin){
+    // increase speed
+    update_SPWM1(settings.rpm, 1);
+  }
+  if (pin_states.down_pin and !down_pin){
+    // decrease speed
+    update_SPWM1(settings.rpm, -1);
+  }  
+  if (pin_states.rpm_pin and !rpm_pin){
+    // toggle speed setting...
+    byte rpm = 33;
+    if (settings.rpm == 33){
+      rpm = 45;
+    }
+    // and update
+    update_SPWM1(rpm, 0);    
+  }   
+  // save pin states
+  pin_states.up_pin = up_pin;
+  pin_states.down_pin = down_pin;  
+  pin_states.rpm_pin = rpm_pin;  
+  //  and wait a bit ...
+  delay(100);
 }
