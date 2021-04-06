@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <EEPROM.h>
+#include <LiquidCrystal_I2C.h>
 
 // Configuration Options
 #define NOMINAL_FREQ 50
@@ -51,6 +52,7 @@ struct PinStates{
 EEPromData settings;
 PinStates pin_states;
 volatile SPWM_Data spwm_data;
+LiquidCrystal_I2C lcd(0x27,16,2);
 
 //EEPROM
 EEPromData load_settings(){
@@ -136,12 +138,12 @@ float set_SPWM1(float switching_frequency, float nominal_frequency, float speed_
   // enable all interrupts
   interrupts();
   // output debug info if required
-  // Serial.println(count);
-  // Serial.println(spwm_data.steps);
-  // Serial.println(spwm_data.strobe_limit);
-  // Serial.println(spwm_data.strobe_off_value);
+  Serial.print("count: "); Serial.println(count);
+  Serial.print("steps: "); Serial.println(spwm_data.steps);
+  Serial.print("strobe limit: "); Serial.println(spwm_data.strobe_limit);
+  Serial.print("strobe count: "); Serial.println(spwm_data.strobe_off_value);
   // for(int i = 0; i < spwm_data.steps; i++){
-  //   Serial.println(spwm_data.pwm_values[i]);
+  //   Serial.print("Value "); Serial.print(i); Serial.print(": "); Serial.println(spwm_data.pwm_values[i]);
   // }  
   return actual_correction;  
 }
@@ -238,7 +240,11 @@ void update_SPWM1(byte rpm, int delta){
   }   
   if (save) save_settings(settings);
   Serial.print("rpm: "); Serial.println(settings.rpm);  
-  Serial.print("correction: "); Serial.println(settings.speed_correction);     
+  Serial.print("speed_correction: "); Serial.println(settings.speed_correction);   
+  lcd.setCursor(0,0);
+  lcd.print("rpm: "); lcd.print(settings.rpm);
+  lcd.setCursor(0,1);
+  lcd.print("xSpd: "); lcd.print(settings.speed_correction); 
 }
 
 
@@ -247,8 +253,10 @@ void setup() {
   pinMode(UP_PIN, INPUT_PULLUP); 
   pinMode(DOWN_PIN, INPUT_PULLUP); 
   pinMode(RPM_TOGGLE_PIN, INPUT_PULLUP); 
-  // Initialise serial port
-  Serial.begin(9600);
+  // Initialise serial port and lcd
+  Serial.begin(115200);
+  lcd.init();  
+  lcd.backlight();
   // Load settings
   settings = load_settings();
   // Setup SPWM...
