@@ -4,7 +4,6 @@
 
 // Configuration Options
 #define NOMINAL_FREQ 50
-#define CORRECTION 1.002076127
 #define STROBE_FREQ 50
 #define STROBE_ON_MS 0.2
 #define SWITCHING_FREQ 20000
@@ -18,7 +17,7 @@
 #define STROBEPIN 3
 #define UP_PIN 4
 #define DOWN_PIN 5
-#define RPM_TOGGLE_PIN 6
+#define RPM_TOGGLE_PIN 2
 
 // Other constants
 #define APP_ID "SPWM"
@@ -27,7 +26,7 @@
 struct SPWM_Data {
   unsigned int steps;
   unsigned int *pwm_values = NULL;
-  unsigned int quadrant = 0;
+  unsigned int phase = 0;
   unsigned int step = 0;
   unsigned int strobe_counter = 0;  
   unsigned int strobe_off_value = 0;
@@ -104,15 +103,15 @@ float set_SPWM1(float switching_frequency, float nominal_frequency, float speed_
   }
   // Initialise SPWM state
   spwm_data.step = 0;
-  spwm_data.quadrant = 0;
-  // Work out 'on' count array for ocr (only need to do it for 1 quadrant)
-  unsigned int nominal_steps = switching_frequency/nominal_frequency/4;
-  spwm_data.steps = switching_frequency/(nominal_frequency * speed_correction)/4;
+  spwm_data.phase = 0;
+  // Work out 'on' count array for ocr (only need to do it for 1 phase)
+  unsigned int nominal_steps = floor(switching_frequency/nominal_frequency/2.0);
+  spwm_data.steps = floor(switching_frequency/(nominal_frequency * speed_correction)/2.0);
   float actual_correction = (float) nominal_steps / (float) spwm_data.steps;
   free(spwm_data.pwm_values); 
   spwm_data.pwm_values = (unsigned int*) calloc(spwm_data.steps, sizeof(unsigned int));
   for(int i = 0; i < spwm_data.steps; i++){
-    spwm_data.pwm_values[i] = count * sin(2 * M_PI * i / spwm_data.steps / 4)  * scale_factor ;
+    spwm_data.pwm_values[i] = count * sin(M_PI * i / spwm_data.steps)  * scale_factor ;
   }
   // Work out strobe values
   spwm_data.strobe_limit = SWITCHING_FREQ/STROBE_FREQ;
@@ -166,18 +165,18 @@ ISR(TIMER1_OVF_vect){
   if(spwm_data.step >= spwm_data.steps){
     // reset    
     spwm_data.step = 0;
-    // increment quadrant and reset if it overflows
-    spwm_data.quadrant++;
-    if(spwm_data.quadrant >= 4){
-      spwm_data.quadrant = 0;      
+    // increment phase and reset if it overflows
+    spwm_data.phase++;
+    if(spwm_data.phase >= 2){
+      spwm_data.phase = 0;      
     }
-    // Switch off one of the comparators depending on quadrant
+    // Switch off one of the comparators depending on phase
     byte tcccr1a = TCCR1A;  
-    if(spwm_data.quadrant < 2){
+    if(spwm_data.phase < 1){
+      // A on, B off
       // HBRIDGE PINS
       digitalWrite(HBRIDGEA, INVERT);  
       digitalWrite(HBRIDGEB, !INVERT);              
-      // A on, B off
       digitalWrite(TIMER1PINB, INVERT);     
       OCR1B = 0;  
       tcccr1a |= _BV(COM1A1);
@@ -188,11 +187,12 @@ ISR(TIMER1_OVF_vect){
       tcccr1a &= ~_BV(COM1B1); 
       tcccr1a &= ~_BV(COM1B0); 
     } else {
+      // A off, B on
       // HBRIDGE PINS
       digitalWrite(HBRIDGEA, !INVERT);  
-      digitalWrite(HBRIDGEB, INVERT);       
+      digitalWrite(HBRIDGEB, INVERT); 
       digitalWrite(TIMER1PINA, INVERT);    
-      OCR1A = 0;       
+      OCR1A = 0;     
       tcccr1a |= _BV(COM1B1);
       if(INVERT) 
         tcccr1a |= _BV(COM1B0);
@@ -203,19 +203,12 @@ ISR(TIMER1_OVF_vect){
     }
     TCCR1A = tcccr1a;
   }
-  // get index for PWM value depending on quadrant
-  unsigned int index;
-  if(spwm_data.quadrant % 2){
-    index = spwm_data.steps - spwm_data.step - 1;
+    // Set appropriate comparator depending on quadrant
+  if(spwm_data.phase < 1){
+    OCR1A = spwm_data.pwm_values[spwm_data.step];
   } else {
-    index = spwm_data.step;
-  }
-  // Set appropriate comparator depending on quadrant
-  if(spwm_data.quadrant < 2){
-    OCR1A = spwm_data.pwm_values[index];
-  } else {
-    OCR1B = spwm_data.pwm_values[index];
-  }    
+    OCR1B = spwm_data.pwm_values[spwm_data.step];
+  } 
 }
 
 void update_SPWM1(byte rpm, int delta){
@@ -240,11 +233,16 @@ void update_SPWM1(byte rpm, int delta){
   }   
   if (save) save_settings(settings);
   Serial.print("rpm: "); Serial.println(settings.rpm);  
-  Serial.print("speed_correction: "); Serial.println(settings.speed_correction);   
+  Serial.print("speed_correction: "); Serial.println(settings.speed_correction,3);   
   lcd.setCursor(0,0);
-  lcd.print("rpm: "); lcd.print(settings.rpm);
+  lcd.print("rpm: "); 
+  if (settings.rpm == 33) {
+    lcd.print("33 1/3");
+  } else {
+    lcd.print("45    ");
+  }
   lcd.setCursor(0,1);
-  lcd.print("xSpd: "); lcd.print(settings.speed_correction); 
+  lcd.print("xSpd: "); lcd.print(settings.speed_correction,3); 
 }
 
 
