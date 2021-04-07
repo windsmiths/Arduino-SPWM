@@ -21,11 +21,13 @@
 
 // Other constants
 #define APP_ID "SPWM"
+#define SPEED_CORR_DPS 4
 
 // Structure for SPWM interrupt state and info 
 struct SPWM_Data {
   unsigned int steps;
-  unsigned int *pwm_values = NULL;
+  int *pwm_values = NULL;
+  unsigned int phase1_step = 0;  
   unsigned int phase = 0;
   unsigned int step = 0;
   unsigned int strobe_counter = 0;  
@@ -105,13 +107,17 @@ float set_SPWM1(float switching_frequency, float nominal_frequency, float speed_
   spwm_data.step = 0;
   spwm_data.phase = 0;
   // Work out 'on' count array for ocr (only need to do it for 1 phase)
-  unsigned int nominal_steps = floor(switching_frequency/nominal_frequency/2.0);
-  spwm_data.steps = floor(switching_frequency/(nominal_frequency * speed_correction)/2.0);
+  unsigned int nominal_steps = floor(switching_frequency / nominal_frequency + 0.5);
+  spwm_data.steps = floor(switching_frequency / (nominal_frequency * speed_correction) + 0.5);
   float actual_correction = (float) nominal_steps / (float) spwm_data.steps;
   free(spwm_data.pwm_values); 
   spwm_data.pwm_values = (unsigned int*) calloc(spwm_data.steps, sizeof(unsigned int));
+  int prev_value = -1;
   for(int i = 0; i < spwm_data.steps; i++){
-    spwm_data.pwm_values[i] = count * sin(M_PI * i / spwm_data.steps)  * scale_factor ;
+    spwm_data.pwm_values[i] = count * sin(2.0 * M_PI * i / spwm_data.steps)  * scale_factor ;
+    if (prev_value > 0 and spwm_data.pwm_values[i] <= 0)
+      spwm_data.phase1_step = i;
+    prev_value = spwm_data.pwm_values[i];
   }
   // Work out strobe values
   spwm_data.strobe_limit = SWITCHING_FREQ/STROBE_FREQ;
@@ -139,6 +145,7 @@ float set_SPWM1(float switching_frequency, float nominal_frequency, float speed_
   // output debug info if required
   Serial.print("count: "); Serial.println(count);
   Serial.print("steps: "); Serial.println(spwm_data.steps);
+  Serial.print("phase1_step: "); Serial.println(spwm_data.phase1_step);
   Serial.print("strobe limit: "); Serial.println(spwm_data.strobe_limit);
   Serial.print("strobe count: "); Serial.println(spwm_data.strobe_off_value);
   // for(int i = 0; i < spwm_data.steps; i++){
@@ -161,14 +168,15 @@ ISR(TIMER1_OVF_vect){
   // SPWM
   //increment step..
   spwm_data.step++;
+  bool overflow = spwm_data.step >= spwm_data.steps;
   // if it overflows...
-  if(spwm_data.step >= spwm_data.steps){
-    // reset    
-    spwm_data.step = 0;
-    // increment phase and reset if it overflows
-    spwm_data.phase++;
-    if(spwm_data.phase >= 2){
-      spwm_data.phase = 0;      
+  if(spwm_data.step == spwm_data.phase1_step or overflow){
+    // reset step counter if we have reached limit  
+    if (overflow) {
+      spwm_data.step = 0;
+      spwm_data.phase = 0;
+    } else {
+      spwm_data.phase = 1;
     }
     // Switch off one of the comparators depending on phase
     byte tcccr1a = TCCR1A;  
@@ -207,7 +215,7 @@ ISR(TIMER1_OVF_vect){
   if(spwm_data.phase < 1){
     OCR1A = spwm_data.pwm_values[spwm_data.step];
   } else {
-    OCR1B = spwm_data.pwm_values[spwm_data.step];
+    OCR1B = -spwm_data.pwm_values[spwm_data.step];
   } 
 }
 
@@ -236,7 +244,7 @@ void update_SPWM1(byte rpm, int delta){
   }   
   if (save) save_settings(settings);
   Serial.print("rpm: "); Serial.println(settings.rpm);  
-  Serial.print("speed_correction: "); Serial.println(settings.speed_correction,3);   
+  Serial.print("speed_correction: "); Serial.println(settings.speed_correction, SPEED_CORR_DPS);   
   lcd.setCursor(0,0);
   lcd.print("rpm: "); 
   if (settings.rpm == 33) {
@@ -245,7 +253,7 @@ void update_SPWM1(byte rpm, int delta){
     lcd.print("45    ");
   }
   lcd.setCursor(0,1);
-  lcd.print("xSpd: "); lcd.print(settings.speed_correction,3); 
+  lcd.print("xSpd: "); lcd.print(settings.speed_correction, SPEED_CORR_DPS); 
 }
 
 
