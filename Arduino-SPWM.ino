@@ -215,16 +215,19 @@ void update_SPWM1(byte rpm, int delta){
   float nominal_frequency = NOMINAL_FREQ;
   float speed_correction = settings.speed_correction;
   bool save = false;
-  if (delta != 0){
+  // Only apply speed correction deltas in 33 rpm mode  
+  if (delta != 0 and rpm == 33){
     speed_correction = speed_correction * (float) (spwm_data.steps + delta) / (float) spwm_data.steps;
   }
+  // Adjust nominal frequency for 45 rpm
   if (rpm == 45){
     nominal_frequency = nominal_frequency * 45.0 / (100.0 / 3.0);
   } 
+  // Apply settings
   float actual_correction = set_SPWM1(SWITCHING_FREQ, nominal_frequency, speed_correction, 1);
-  if (actual_correction != settings.speed_correction){
-    settings.speed_correction = actual_correction;
-   
+
+  if (actual_correction != settings.speed_correction and rpm == 33){
+    settings.speed_correction = actual_correction; 
     save = true;
   }  
   if (rpm != settings.rpm){
