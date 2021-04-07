@@ -18,6 +18,7 @@
 #define UP_PIN 4
 #define DOWN_PIN 5
 #define RPM_TOGGLE_PIN 2
+#define LED_45RPM 13
 
 // Other constants
 #define APP_ID "SPWM"
@@ -300,6 +301,7 @@ void loop() {
     // and update
     update_SPWM1(rpm, 0);    
   }   
+  digitalWrite(LED_45RPM, settings.rpm == 45);
   // save pin states
   pin_states.up_pin = up_pin;
   pin_states.down_pin = down_pin;  
