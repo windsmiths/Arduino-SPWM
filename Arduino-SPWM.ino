@@ -13,8 +13,6 @@
 // Board related Constants
 #define TIMER1PINA 9
 #define TIMER1PINB 10
-#define HBRIDGEA 11
-#define HBRIDGEB 12
 #define STROBEPIN 3
 #define UP_PIN 4
 #define DOWN_PIN 5
@@ -88,11 +86,7 @@ float set_SPWM1(float switching_frequency, float nominal_frequency, float speed_
   // switch outputs to off
   digitalWrite(TIMER1PINA, INVERT);
   digitalWrite(TIMER1PINB, INVERT);
-  digitalWrite(HBRIDGEA, !INVERT);
-  digitalWrite(HBRIDGEB, !INVERT); 
   digitalWrite(STROBEPIN, LOW);    
-  pinMode(HBRIDGEA, OUTPUT);  
-  pinMode(HBRIDGEB, OUTPUT);  
   pinMode(STROBEPIN, OUTPUT);  
   DDRB |= _BV(DDB1) | _BV(DDB2);
   // disable interrupts while we setup...
@@ -184,10 +178,7 @@ ISR(TIMER1_OVF_vect){
     // Switch off one of the comparators depending on phase
     byte tcccr1a = TCCR1A;  
     if(spwm_data.phase < 1){
-      // A on, B off
-      // HBRIDGE PINS
-      digitalWrite(HBRIDGEA, INVERT);  
-      digitalWrite(HBRIDGEB, !INVERT);              
+      // A on, B off          
       digitalWrite(TIMER1PINB, INVERT);     
       OCR1B = 0;  
       tcccr1a |= _BV(COM1A1);
@@ -199,9 +190,6 @@ ISR(TIMER1_OVF_vect){
       tcccr1a &= ~_BV(COM1B0); 
     } else {
       // A off, B on
-      // HBRIDGE PINS
-      digitalWrite(HBRIDGEA, !INVERT);  
-      digitalWrite(HBRIDGEB, INVERT); 
       digitalWrite(TIMER1PINA, INVERT);    
       OCR1A = 0;     
       tcccr1a |= _BV(COM1B1);
