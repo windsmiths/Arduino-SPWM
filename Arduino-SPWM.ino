@@ -8,6 +8,7 @@
 #define STROBE_ON_MS 0.2
 #define SWITCHING_FREQ 20000
 #define INVERT 0
+#define SCALE_FACTOR 1.0
 
 // Board related Constants
 #define TIMER1PINA 9
@@ -112,7 +113,7 @@ float set_SPWM1(float switching_frequency, float nominal_frequency, float speed_
   spwm_data.steps = floor(switching_frequency / (nominal_frequency * speed_correction) + 0.5);
   float actual_correction = (float) nominal_steps / (float) spwm_data.steps;
   free(spwm_data.pwm_values); 
-  spwm_data.pwm_values = (unsigned int*) calloc(spwm_data.steps, sizeof(unsigned int));
+  spwm_data.pwm_values = (int*) calloc(spwm_data.steps, sizeof(int));
   int prev_value = -1;
   for(int i = 0; i < spwm_data.steps; i++){
     spwm_data.pwm_values[i] = count * sin(2.0 * M_PI * i / spwm_data.steps)  * scale_factor ;
@@ -169,10 +170,11 @@ ISR(TIMER1_OVF_vect){
   // SPWM
   //increment step..
   spwm_data.step++;
+  // check for overflow...
   bool overflow = spwm_data.step >= spwm_data.steps;
-  // if it overflows...
+  // if we reach phase change value or it overflows...
   if(spwm_data.step == spwm_data.phase1_step or overflow){
-    // reset step counter if we have reached limit  
+    // set phase and reset step counter if we have reached limit  
     if (overflow) {
       spwm_data.step = 0;
       spwm_data.phase = 0;
@@ -233,7 +235,7 @@ void update_SPWM1(byte rpm, int delta){
     nominal_frequency = nominal_frequency * 45.0 / (100.0 / 3.0);
   } 
   // Apply settings
-  float actual_correction = set_SPWM1(SWITCHING_FREQ, nominal_frequency, speed_correction, 1);
+  float actual_correction = set_SPWM1(SWITCHING_FREQ, nominal_frequency, speed_correction, SCALE_FACTOR);
 
   if (actual_correction != settings.speed_correction and rpm == 33){
     settings.speed_correction = actual_correction; 
