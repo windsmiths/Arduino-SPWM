@@ -81,8 +81,8 @@ void save_settings(EEPromData settings){
 // PWM Setup
 float set_SPWM1(float switching_frequency, float nominal_frequency, float speed_correction, float scale_factor) {
   // switch outputs to off
-  digitalWrite(TIMER1PINA, INVERT);
-  digitalWrite(TIMER1PINB, INVERT);
+  digitalWrite(TIMER1PINA, LOW);
+  digitalWrite(TIMER1PINB, LOW);
   digitalWrite(STROBEPIN, LOW); 
   // set directions   
   pinMode(STROBEPIN, OUTPUT);  
