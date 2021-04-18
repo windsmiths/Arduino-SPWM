@@ -7,7 +7,6 @@
 #define STROBE_FREQ 50
 #define STROBE_ON_MS 0.2
 #define SWITCHING_FREQ 20000
-#define INVERT 0
 #define SCALE_FACTOR 1.0
 
 // Board related Constants
@@ -27,8 +26,6 @@
 struct SPWM_Data {
   unsigned int steps;
   int *pwm_values = NULL;
-  unsigned int phase1_step = 0;  
-  unsigned int phase = 0;
   unsigned int step = 0;
   unsigned int strobe_counter = 0;  
   unsigned int strobe_off_value = 0;
@@ -60,7 +57,7 @@ EEPromData load_settings(){
   EEPromData default_settings;
   EEPromData settings;
   EEPROM.get(0, settings);
-  if(!strcmp(settings.app_id, APP_ID)){
+  if (!strcmp(settings.app_id, APP_ID)) {
     Serial.println("Loading settings from EPROM...");
     // EEPROM has a structure we recognise
     if (settings.version < default_settings.version){
@@ -86,7 +83,8 @@ float set_SPWM1(float switching_frequency, float nominal_frequency, float speed_
   // switch outputs to off
   digitalWrite(TIMER1PINA, INVERT);
   digitalWrite(TIMER1PINB, INVERT);
-  digitalWrite(STROBEPIN, LOW);    
+  digitalWrite(STROBEPIN, LOW); 
+  // set directions   
   pinMode(STROBEPIN, OUTPUT);  
   DDRB |= _BV(DDB1) | _BV(DDB2);
   // disable interrupts while we setup...
@@ -101,19 +99,14 @@ float set_SPWM1(float switching_frequency, float nominal_frequency, float speed_
   }
   // Initialise SPWM state
   spwm_data.step = 0;
-  spwm_data.phase = 0;
-  // Work out 'on' count array for ocr (only need to do it for 1 phase)
+  // Work out 'on' count array for ocr 
   unsigned int nominal_steps = floor(switching_frequency / nominal_frequency + 0.5);
   spwm_data.steps = floor(switching_frequency / (nominal_frequency * speed_correction) + 0.5);
   float actual_correction = (float) nominal_steps / (float) spwm_data.steps;
   free(spwm_data.pwm_values); 
   spwm_data.pwm_values = (int*) calloc(spwm_data.steps, sizeof(int));
-  int prev_value = -1;
   for(int i = 0; i < spwm_data.steps; i++){
-    spwm_data.pwm_values[i] = count * sin(2.0 * M_PI * i / spwm_data.steps)  * scale_factor ;
-    if (prev_value > 0 and spwm_data.pwm_values[i] <= 0)
-      spwm_data.phase1_step = i;
-    prev_value = spwm_data.pwm_values[i];
+    spwm_data.pwm_values[i] = floor(0.5 + count * (0.5 + sin(2.0 * M_PI * i / spwm_data.steps)  * scale_factor / 2.0)) ;
   }
   // Work out strobe values
   spwm_data.strobe_limit = SWITCHING_FREQ/STROBE_FREQ;
@@ -130,6 +123,10 @@ float set_SPWM1(float switching_frequency, float nominal_frequency, float speed_
   // set Fast PWM mode using ICR1 as TOP
   TCCR1A |= _BV(WGM11);
   TCCR1B |= _BV(WGM12) | _BV(WGM13);
+  // set A and B as complementary comparators
+  TCCR1A |= _BV(COM1A1);
+  TCCR1A |= _BV(COM1B1);
+  TCCR1A |= _BV(COM1B0);
   // START the timer with no prescaler or 1024 prescaler
   TCCR1B |= _BV(CS10) | (cs12 << CS12);
   // switch on outputs
@@ -141,12 +138,11 @@ float set_SPWM1(float switching_frequency, float nominal_frequency, float speed_
   // output debug info if required
   Serial.print("count: "); Serial.println(count);
   Serial.print("steps: "); Serial.println(spwm_data.steps);
-  Serial.print("phase1_step: "); Serial.println(spwm_data.phase1_step);
   Serial.print("strobe limit: "); Serial.println(spwm_data.strobe_limit);
   Serial.print("strobe count: "); Serial.println(spwm_data.strobe_off_value);
-  // for(int i = 0; i < spwm_data.steps; i++){
-  //   Serial.print("Value "); Serial.print(i); Serial.print(": "); Serial.println(spwm_data.pwm_values[i]);
-  // }  
+//   for(int i = 0; i < spwm_data.steps; i++){
+//     Serial.print("Value "); Serial.print(i); Serial.print(": "); Serial.println(spwm_data.pwm_values[i]);
+//   }  
   return actual_correction;  
 }
 
@@ -154,60 +150,23 @@ float set_SPWM1(float switching_frequency, float nominal_frequency, float speed_
 ISR(TIMER1_OVF_vect){
   // strobe...
   spwm_data.strobe_counter++;
-  if(spwm_data.strobe_counter >= spwm_data.strobe_limit){
+  if (spwm_data.strobe_counter >= spwm_data.strobe_limit) {
     spwm_data.strobe_counter = 0; 
     digitalWrite(STROBEPIN, HIGH); 
   } else {
-    if(spwm_data.strobe_counter == spwm_data.strobe_off_value)
+    if (spwm_data.strobe_counter == spwm_data.strobe_off_value)
       digitalWrite(STROBEPIN, LOW); 
   }
   // SPWM
   //increment step..
   spwm_data.step++;
   // check for overflow...
-  bool overflow = spwm_data.step >= spwm_data.steps;
-  // if we reach phase change value or it overflows...
-  if(spwm_data.step == spwm_data.phase1_step or overflow){
-    // set phase and reset step counter if we have reached limit  
-    if (overflow) {
-      spwm_data.step = 0;
-      spwm_data.phase = 0;
-    } else {
-      spwm_data.phase = 1;
-    }
-    // Switch off one of the comparators depending on phase
-    byte tcccr1a = TCCR1A;  
-    if(spwm_data.phase < 1){
-      // A on, B off          
-      digitalWrite(TIMER1PINB, INVERT);     
-      OCR1B = 0;  
-      tcccr1a |= _BV(COM1A1);
-      if(INVERT) 
-        tcccr1a |= _BV(COM1A0);
-      else
-        tcccr1a &= ~_BV(COM1A0);      
-      tcccr1a &= ~_BV(COM1B1); 
-      tcccr1a &= ~_BV(COM1B0); 
-    } else {
-      // A off, B on
-      digitalWrite(TIMER1PINA, INVERT);    
-      OCR1A = 0;     
-      tcccr1a |= _BV(COM1B1);
-      if(INVERT) 
-        tcccr1a |= _BV(COM1B0);
-      else
-        tcccr1a &= ~_BV(COM1B0);      
-      tcccr1a &= ~_BV(COM1A1); 
-      tcccr1a &= ~_BV(COM1A0);     
-    }
-    TCCR1A = tcccr1a;
+  if(spwm_data.step >= spwm_data.steps){
+    spwm_data.step = 0;
   }
-    // Set appropriate comparator depending on quadrant
-  if(spwm_data.phase < 1){
-    OCR1A = spwm_data.pwm_values[spwm_data.step];
-  } else {
-    OCR1B = -spwm_data.pwm_values[spwm_data.step];
-  } 
+  // Set comparators
+  OCR1A = spwm_data.pwm_values[spwm_data.step];
+  OCR1B = spwm_data.pwm_values[spwm_data.step];
 }
 
 void update_SPWM1(byte rpm, int delta){
