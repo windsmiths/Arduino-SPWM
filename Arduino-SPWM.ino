@@ -12,6 +12,7 @@
 // Board related Constants
 #define TIMER1PINA 9
 #define TIMER1PINB 10
+#define DISABLEPIN 6
 #define STROBEPIN 3
 #define UP_PIN 4
 #define DOWN_PIN 5
@@ -86,7 +87,10 @@ float set_SPWM1(float switching_frequency, float nominal_frequency, float speed_
   digitalWrite(STROBEPIN, LOW); 
   // set directions   
   pinMode(STROBEPIN, OUTPUT);  
+  pinMode(DISABLEPIN, OUTPUT);  
   DDRB |= _BV(DDB1) | _BV(DDB2);
+  // Prime boost caps
+  digitalWrite(DISABLEPIN, HIGH);
   // disable interrupts while we setup...
   noInterrupts();
   // Calculate top value for required frequency assuming no prescaling
@@ -133,6 +137,8 @@ float set_SPWM1(float switching_frequency, float nominal_frequency, float speed_
   DDRB |= _BV(DDB1) | _BV(DDB2); 
   // Enable overflow interrupt
   TIMSK1 |= _BV(TOIE1);
+  // Enable Bridge Driver
+  digitalWrite(DISABLEPIN, LOW);
   // enable all interrupts
   interrupts();
   // output debug info if required
